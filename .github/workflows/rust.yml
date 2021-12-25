@@ -15,8 +15,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: install gdal (sigh)
+      run: sudo apt install -y gdal-dev
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose
+    - run: rustup component add clippy
+    - uses: actions-rs/clippy-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        args: --all-features
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
+    - name: Run cargo-tarpaulin
+      uses: actions-rs/tarpaulin@v0.1
+      with:
+        version: '0.18.5'
+
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v1.0.2
+      with:
+        token: ${{secrets.CODECOV_TOKEN}}
+
+    - name: Archive code coverage results
+      uses: actions/upload-artifact@v1
+      with:
+        name: code-coverage-report
+        path: cobertura.xml
