@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: install gdal (sigh)
-      run: sudo apt install -y gdal-dev
+      run: sudo apt install -y libgdal-dev gdal-bin
     - uses: actions/checkout@v2
     - run: rustup component add clippy
     - uses: actions-rs/clippy-check@v1
