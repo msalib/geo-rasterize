@@ -22,7 +22,7 @@ itertools = "0.10.1"
 smallvec = "1.6.1"
 
 [dev-dependencies]
-gdal = {version = "0.11.0", features = ["array", "bindgen"]}
+gdal = {version = "0.11.0", features = ["array"]}
 pretty_assertions = "1.0.0"
 anyhow = "1.0.42"
 proptest = "1.0.0"
