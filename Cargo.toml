@@ -1,0 +1,30 @@
+[package]
+name = "geo-rasterize"
+version = "0.1.0"
+edition = "2021"
+authors = ["Michael Salib <msalib@gmail.com>"]
+rust-version = "1.56"  # only because we're using the 2021 edition
+description = "a pure-rust 2D rasterizer for geospatial applications"
+repository = "https://github.com/msalib/geo-rasterize/"
+license = "MIT OR Apache-2.0"
+keywords = ["geospatial", "gis", "geo", "raster", "geographic"]
+categories = ["encoding", "graphics", "rendering", "science"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+euclid = "0.22.6"
+ndarray = "0.15.3"
+geo = "0.18.0"
+thiserror = "1.0.26"
+num-traits = "0.2.14"
+itertools = "0.10.1"
+smallvec = "1.6.1"
+
+[dev-dependencies]
+gdal = {version = "0.11.0", features = ["array"]}
+pretty_assertions = "1.0.0"
+anyhow = "1.0.42"
+proptest = "1.0.0"
+
+
