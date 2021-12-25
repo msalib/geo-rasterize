@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: add gdal repo
-      run: sudo apt-add-repository ppa:ubuntugis/ubuntugis-stable
+      run: sudo apt-add-repository ppa:ubuntugis/ppa
     - name: and update...
       run: sudo apt-get update
     - name: install gdal (sigh)
