@@ -1,11 +1,25 @@
 # geo-rasterize: a pure-rust 2D rasterizer for geospatial applications
 
+[![Crates.io][crates-badge]][crates-url]
+[![Docs.rs][docs-badge]][docs-url]
+[![CodeCov.io][codecov-badge]][codecov-url]
+[![Build Status][actions-badge]][actions-url]
+
+[crates-badge]: https://img.shields.io/crates/v/geo-rasterize.svg
+[crates-url]: https://crates.io/crates/geo-rasterize
+[docs-badge]: https://img.shields.io/docsrs/geo-rasterize
+[docs-url]: https://docs.rs/geo-rasterize/latest/geo_rasterize/
+[codecov-badge]: https://img.shields.io/codecov/c/github/msalib/geo-rasterize
+[codecov-url]: https://app.codecov.io/gh/msalib/geo-rasterize/
+[actions-badge]: https://github.com/msalib/geo-rasterize/actions/workflows/CI.yml/badge.svg
+[actions-url]: https://github.com/msalib/geo-rasterize/actions?query=CI+branch%3Amain
+
 This crate is intended for folks who have some vector data (like a
 `geo::Polygon`) and a raster source (like a GeoTiff perhaps opened
-with `gdal`) and who want to generate a boolean array representing
+with `GDAL`) and who want to generate a boolean array representing
 which bits of raster are filled in by the polygon.
 
-This implementation is based on `gdal`'s `GDALRasterizeGeometries` and
+This implementation is based on `GDAL`'s `GDALRasterizeGeometries` and
 allows you to rasterize any type supported by the `geo-types` package,
 including:
 * [Point](geo::Point)
@@ -24,7 +38,10 @@ This crate matches GDAL's behavior when GDAL is supplied with the
 for GDAL if you only need a GDAL-compatible rasterizer. Also, there's
 no support for GDAL's `BURN_VALUE_FROM=Z`. But otherwise, this code
 should produce identical results to GDAL's rasterizer -- the
-rasterization algorithm is a direct port.
+rasterization algorithm is a direct port. We use
+[proptest](https://crates.io/crates/proptest) to perform randomized
+differential comparisons with GDAL in order bolster confidence about
+our conformance.
 
 
 <!-- there are different conventions for representing image data in an

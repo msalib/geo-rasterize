@@ -31,7 +31,7 @@ pub type Transform = Transform2D<f64, UnknownUnit, UnknownUnit>;
 type EuclidPoint = euclid::Point2D<f64, UnknownUnit>;
 
 /// Error type for this crate
-#[derive(Error, Clone, Debug)]
+#[derive(Error, Clone, Debug, PartialEq, Eq)]
 pub enum RasterizeError {
     /// at least one coordinate of the supplied geometry is NaN or infinite
     #[error("at least one coordinate of the supplied geometry is NaN or infinite")]
@@ -202,7 +202,7 @@ impl BinaryRasterizer {
         self.geo_to_pix
     }
 
-    pub fn set_transform(&mut self, geo_to_pix: Transform) {
+    pub fn with_geo_to_pix(&mut self, geo_to_pix: Transform) {
         self.geo_to_pix = Some(geo_to_pix);
     }
 
@@ -255,7 +255,7 @@ pub trait Rasterize {
 
 /// Conflict resolution strategy for cases where two shapes cover the
 /// same pixel.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeAlgorithm {
     /// Overwrite the pixel with the burn value associated with the
     /// last shape to be written to it. This is the default.
@@ -432,6 +432,11 @@ where
 
     fn height(&self) -> usize {
         self.pixels.shape()[0]
+    }
+
+    /// Retrieve the transform.
+    pub fn geo_to_pix(&self) -> Option<Transform> {
+        self.geo_to_pix
     }
 
     fn binary(&self) -> Result<BinaryRasterizer> {
@@ -807,6 +812,37 @@ mod tests {
     }
 
     #[test]
+    fn heatmap_transform() -> Result<()> {
+        let lines = vec![Line::new((0, 0), (5, 5)), Line::new((5, 0), (0, 5))];
+        let transform = Transform::identity();
+
+        let mut rasterizer = LabelBuilder::background(0)
+            .width(5)
+            .height(5)
+            .algorithm(MergeAlgorithm::Add)
+            .geo_to_pix(transform)
+            .build()?;
+        assert_eq!(rasterizer.geo_to_pix(), Some(transform));
+
+        for line in lines {
+            rasterizer.rasterize(&line, 1)?;
+        }
+
+        let pixels = rasterizer.finish();
+        assert_eq!(
+            pixels.mapv(|v| v as u8),
+            array![
+                [1, 0, 0, 0, 1],
+                [0, 1, 0, 1, 1],
+                [0, 0, 2, 1, 0],
+                [0, 1, 1, 1, 0],
+                [1, 1, 0, 0, 1]
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn bad_line() -> Result<()> {
         let line = Line {
             start: Coordinate {
@@ -896,6 +932,67 @@ mod tests {
         );
         let (actual, expected) = compare(17, 19, &r)?;
         assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn stuff() -> Result<()> {
+        BinaryBuilder::new()
+            .width(3)
+            .height(4)
+            .geo_to_pix(Transform::identity())
+            .build()?;
+
+        let mut r = BinaryRasterizer::new(5, 7, None)?;
+        assert_eq!(r.geo_to_pix(), None);
+        let transform = Transform::identity();
+        r.with_geo_to_pix(transform);
+        assert_eq!(r.geo_to_pix(), Some(transform));
+        Ok(())
+    }
+
+    #[test]
+    fn check_errors() -> Result<()> {
+        let point = Point::new(123., f64::NAN);
+        assert_eq!(
+            BinaryBuilder::new()
+                .height(4)
+                .width(7)
+                .build()?
+                .rasterize(&point),
+            Err(RasterizeError::NonFiniteCoordinate)
+        );
+
+        assert_eq!(
+            BinaryBuilder::new().width(4).build().err().unwrap(),
+            RasterizeError::MissingHeight
+        );
+
+        assert_eq!(
+            BinaryBuilder::new().height(4).build().err().unwrap(),
+            RasterizeError::MissingWidth
+        );
+
+        assert_eq!(
+            LabelBuilder::background(0).width(4).build().err().unwrap(),
+            RasterizeError::MissingHeight
+        );
+
+        assert_eq!(
+            LabelBuilder::background(0).height(4).build().err().unwrap(),
+            RasterizeError::MissingWidth
+        );
+
+        assert_eq!(
+            BinaryRasterizer::new(
+                5,
+                8,
+                Some(Transform::from_array([0., 1., 2., 3., 4., f64::NAN]))
+            )
+            .err()
+            .unwrap(),
+            RasterizeError::NonFiniteCoordinate
+        );
         Ok(())
     }
 }
