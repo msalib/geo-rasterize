@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -8,10 +8,16 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # https://matklad.github.io/2021/09/04/fast-rust-builds.html
+  # indicates that non-incremental builds improve CI performance.
+  CARGO_INCREMENTAL: 0
+  # Since we're not shipping any build artifacts, turning off debug
+  # symbols will speed things up without hurting anything.
+  RUSTFLAGS: '-C debuginfo=0'
 
 jobs:
   build:
-
+    name: Build and test
     runs-on: ubuntu-latest
 
     steps:
@@ -21,18 +27,24 @@ jobs:
       run: sudo apt-get update
     - name: install gdal (sigh)
       run: sudo apt install -y libgdal-dev gdal-bin
+
     - uses: actions/checkout@v2
-    - run: rustup component add clippy
     - uses: actions-rs/clippy-check@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         args: --all-features
-    - name: Run tests
-      run: cargo test
+
+    # tarpaulin can only handle doctests on nightly, so let's run them
+    # here.
+    - name: Run doc tests
+      run: cargo test --doc
+
     - name: Run cargo-tarpaulin
       uses: actions-rs/tarpaulin@v0.1
       with:
         version: '0.18.5'
+      env:
+        PROPTEST_CASES: 5000
 
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v1.0.2
@@ -44,3 +56,18 @@ jobs:
       with:
         name: code-coverage-report
         path: cobertura.xml
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.ref, 'refs/tags/')"
+    needs: [ build ]
+    steps:
+    - name: install cargo release
+      uses: actions-rs/install@v0.1
+      with:
+        crate: cargo-release
+        version: latest
+        use-tool-cache: true
+    - name: cargo release
+      run: cargo release --token ${{secrets.CRATES_IO_TOKEN}}

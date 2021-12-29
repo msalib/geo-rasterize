@@ -1,4 +1,7 @@
-use geo::{Coordinate, Geometry, Line, LineString, Point, Polygon, Rect, Triangle};
+use geo::{
+    map_coords::MapCoords, Coordinate, Geometry, Line, LineString, MultiLineString, MultiPoint,
+    MultiPolygon, Point, Polygon, Rect, Triangle,
+};
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 
@@ -43,10 +46,9 @@ prop_compose! {
 
 #[rustfmt::skip]
 prop_compose! {
-    fn arb_poly()(center in arb_point(),
-		  exterior_points in 3..17,
-		  radius in 0.000001..15.0) -> Polygon<f64> {
-	// FIXME: add holes!
+    fn arb_linearring()(center in arb_point(),
+		        exterior_points in 3..17,
+		        radius in 0.000001..15.0) -> (Point<f64>, LineString<f64>) {
 	let angles = (0..exterior_points)
 	    .map(|idx| 2.0 * std::f64::consts::PI * (idx as f64) / (exterior_points as f64));
 	let points: Vec<geo::Coordinate<f64>> = angles
@@ -56,8 +58,33 @@ prop_compose! {
 		y: center.y() + radius * sin,
 	    })
 	    .collect();
+	(center, LineString(points))
+    }
+}
 
-	Polygon::new(geo::LineString(points), vec![])
+fn shrink_ring(center: &Point<f64>, ring: &LineString<f64>, scale_factor: f64) -> LineString<f64> {
+    let cx = center.x();
+    let cy = center.y();
+    use euclid::{Point2D, Transform2D, UnknownUnit, Vector2D};
+    let transform: Transform2D<f64, UnknownUnit, UnknownUnit> = Transform2D::identity()
+        .then_translate(Vector2D::new(-cx, -cy))
+        .then_scale(scale_factor, scale_factor)
+        .then_translate(Vector2D::new(cx, cy));
+    ring.map_coords(|&(x, y)| transform.transform_point(Point2D::new(x, y)).to_tuple())
+}
+
+#[rustfmt::skip]
+prop_compose! {
+    fn arb_poly()(center_exterior in arb_linearring(),
+                  include_hole in proptest::bool::ANY,
+                  hole_scale_factor in 0.01..0.9) -> Polygon<f64> {
+	let (center, exterior) = center_exterior;
+	let holes = if include_hole {
+	    vec![shrink_ring(&center, &exterior, hole_scale_factor)]
+	} else {
+	    vec![]
+	};
+	Polygon::new(exterior, holes)
     }
 }
 
@@ -70,6 +97,27 @@ prop_compose! {
     }
 }
 
+#[rustfmt::skip]
+prop_compose! {
+    fn arb_multipoint()(points in proptest::collection::vec(arb_point(), 0..5)) -> MultiPoint<f64>{
+	MultiPoint(points)
+    }
+}
+
+#[rustfmt::skip]
+prop_compose! {
+    fn arb_multiline()(lines in proptest::collection::vec(arb_linestring(), 0..5)) -> MultiLineString<f64>{
+	MultiLineString(lines)
+    }
+}
+
+#[rustfmt::skip]
+prop_compose! {
+    fn arb_multipoly()(polys in proptest::collection::vec(arb_poly(), 0..5)) -> MultiPolygon<f64>{
+	MultiPolygon(polys)
+    }
+}
+
 fn arb_geo() -> impl Strategy<Value = Geometry<f64>> {
     prop_oneof![
         arb_point().prop_map(Geometry::Point),
@@ -78,6 +126,9 @@ fn arb_geo() -> impl Strategy<Value = Geometry<f64>> {
         arb_linestring().prop_map(Geometry::LineString),
         arb_rect().prop_map(Geometry::Rect),
         arb_triangle().prop_map(Geometry::Triangle),
+        arb_multipoint().prop_map(Geometry::MultiPoint),
+        arb_multiline().prop_map(Geometry::MultiLineString),
+        arb_multipoly().prop_map(Geometry::MultiPolygon)
     ]
 }
 
