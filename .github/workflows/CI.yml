@@ -8,6 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # https://matklad.github.io/2021/09/04/fast-rust-builds.html
+  # indicates that non-incremental builds improve CI performance.
+  CARGO_INCREMENTAL: 0
+  # Since we're not shipping any build artifacts, turning off debug
+  # symbols will speed things up without hurting anything.
+  RUSTFLAGS: '-C debuginfo=0'
 
 jobs:
   build:
