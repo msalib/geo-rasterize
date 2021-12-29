@@ -69,6 +69,7 @@ jobs:
         crate: cargo-release
         version: latest
         use-tool-cache: true
+    - uses: actions/checkout@v2
     - run: git config user.name "GitHub actions"
     - run: git config user.email "github-actions@users.noreply.github.com"
     - name: cargo release
