@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3b6b8c4f6e2bd8db2789acfc899df80caad00840fdca48052194109633e7b26b # shrinks to shape = [LineString(LineString([Coordinate { x: 0.0, y: 0.995529841217325 }, Coordinate { x: 14.345339055640835, y: 1.003085512751344 }]))]

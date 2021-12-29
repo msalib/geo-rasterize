@@ -936,6 +936,23 @@ mod tests {
     }
 
     #[test]
+    fn bad_line2() -> Result<()> {
+        let line = Line {
+            start: Coordinate {
+                x: 0.0,
+                y: 0.995529841217325,
+            },
+            end: Coordinate {
+                x: 14.345339055640835,
+                y: 1.003085512751344,
+            },
+        };
+        let (actual, expected) = compare(17, 19, &line)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
     fn stuff() -> Result<()> {
         BinaryBuilder::new()
             .width(3)

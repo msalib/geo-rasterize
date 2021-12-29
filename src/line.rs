@@ -50,7 +50,7 @@ pub fn rasterize_line(line: &Line<f64>, rasterizer: &mut BinaryRasterizer) {
         } else {
             (line.start.x, line.end.x)
         };
-        let y = line.end.y;
+        let y = line.start.y;
 
         let iy = y.floor() as isize;
         if iy < 0 || iy >= (rasterizer.height() as isize) {
