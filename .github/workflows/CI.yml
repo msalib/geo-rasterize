@@ -60,7 +60,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: "startsWith(github.ref, 'refs/tags/')"
+    if: github.event.pull_request.merged == true
     needs: [ build ]
     steps:
     - name: install cargo release
@@ -69,5 +69,7 @@ jobs:
         crate: cargo-release
         version: latest
         use-tool-cache: true
+    - run: git config user.name "GitHub actions"
+    - run: git config user.email "github-actions@users.noreply.github.com"
     - name: cargo release
-      run: cargo release --token ${{secrets.CRATES_IO_TOKEN}}
+      run: cargo release --execute --no-confirm --token ${{secrets.CRATES_IO_TOKEN}}
