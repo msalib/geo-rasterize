@@ -4,6 +4,7 @@
 [![Docs.rs][docs-badge]][docs-url]
 [![CodeCov.io][codecov-badge]][codecov-url]
 [![Build Status][actions-badge]][actions-url]
+[![Python wrapper][py-badge]][py-pkg]
 
 [crates-badge]: https://img.shields.io/crates/v/geo-rasterize.svg
 [crates-url]: https://crates.io/crates/geo-rasterize
@@ -13,11 +14,14 @@
 [codecov-url]: https://app.codecov.io/gh/msalib/geo-rasterize/
 [actions-badge]: https://github.com/msalib/geo-rasterize/actions/workflows/CI.yml/badge.svg
 [actions-url]: https://github.com/msalib/geo-rasterize/actions?query=CI+branch%3Amain
+[py-badge]: https://img.shields.io/pypi/v/geo-rasterize?style=plastic
+[py-pkg]: https://pypi.org/project/geo-rasterize/
 
 This crate is intended for folks who have some vector data (like a
 `geo::Polygon`) and a raster source (like a GeoTiff perhaps opened
 with `GDAL`) and who want to generate a boolean array representing
-which bits of raster are filled in by the polygon.
+which bits of raster are filled in by the polygon. There's also a
+[Python wrapper][py-pkg] available.
 
 This implementation is based on `GDAL`'s `GDALRasterizeGeometries` and
 allows you to rasterize any type supported by the `geo-types` package,
@@ -44,8 +48,10 @@ differential comparisons with GDAL in order bolster confidence about
 our conformance.
 
 
-<!-- there are different conventions for representing image data in an
-array....image matrices are stored in blah blah order -->
+
+<!-- there are different conventions for representing
+image data in an array....image matrices are stored in blah blah order
+-->
 
 
 ## Motivation: satellite imagery data analysis
@@ -151,14 +157,14 @@ assert_eq!(
 So far we've been generating binary arrays; what if you want to
 rasterize different shapes to the same integer array, storing a
 different value corresponding to each shape for each pixel? For that,
-we have [LabelRasterizer] which we construct using
-[LabelBuilder]. When you burn a shape with [LabelRasterizer] you
+we have [Rasterizer] which we construct using
+[LabelBuilder]. When you burn a shape with [Rasterizer] you
 provide not just the shape, but also a foreground label. But before
 you can burn anything, you have to specify a background label used to
 fill the empty raster array.
 
 ```rust
-# use geo_rasterize::{Result, LabelBuilder, LabelRasterizer};
+# use geo_rasterize::{Result, LabelBuilder, Rasterizer};
 # fn main() -> Result<()> {
 use geo::{Geometry, Line, Point};
 use ndarray::array;
@@ -194,7 +200,7 @@ can easily make a heat map showing the shape density where each pixel value tell
 you the number of shapes that landed on it!
 
 ```rust
-# use geo_rasterize::{Result, LabelBuilder, LabelRasterizer, MergeAlgorithm};
+# use geo_rasterize::{Result, LabelBuilder, Rasterizer, MergeAlgorithm};
 # use geo::{Geometry, Line, Point};
 # use ndarray::array;
 # fn main() -> Result<()> {
@@ -226,8 +232,8 @@ assert_eq!(
 ```
 
 Two lines cross at the center where you'll find `2`. Note that
-[LabelRasterizer] is not limited to integers; any copyable type that
-can be added will do. [LabelRasterizer] offers similar functionality
+[Rasterizer] is not limited to integers; any copyable type that
+can be added will do. [Rasterizer] offers similar functionality
 to [rasterio](https://rasterio.readthedocs.io/)'s
 [features.rasterize](https://rasterio.readthedocs.io/en/latest/api/rasterio.features.html#rasterio.features.rasterize)
 function.
@@ -260,7 +266,7 @@ need to invert it to get a `geo_to_pix` transform before applying it
 to the coordinates. And now you've got pixel coordinates appropriate
 for your image data!
 
-[BinaryRasterizer] and [LabelRasterizer] can ease this tedious process
+[BinaryRasterizer] and [Rasterizer] can ease this tedious process
 by taking care of the affine transformation. Make sure to pass a
 [Transform] object to [BinaryBuilder] or [LabelBuilder]. In either
 case, that transform is a `geo_to_pix` transform, which means you'll
@@ -293,7 +299,7 @@ to the pixel size.
 For other shapes, runtime is proportional to the number of pixels
 filled in.
 
-<!-- say something about [LabelRasterizer] memory consumption -->
+<!-- say something about [Rasterizer] memory consumption -->
 <!-- compare gdal performance -->
 
 ## Why not GDAL?

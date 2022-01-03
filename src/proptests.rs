@@ -5,7 +5,8 @@ use geo::{
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 
-use crate::tests::compare;
+use crate::tests::utils::compare;
+use crate::MergeAlgorithm;
 
 // put everything in 17x19, so coordinates in -2..19, -2..21
 
@@ -135,9 +136,8 @@ fn arb_geo() -> impl Strategy<Value = Geometry<f64>> {
 #[rustfmt::skip]
 proptest! {
     #[test]
-    fn match_gdal(shape in proptest::collection::vec(arb_geo(), 1..5)) {
-	let shape = Geometry::GeometryCollection(geo::GeometryCollection(shape));
-	let (actual, expected) = compare(17, 19, &shape).unwrap();
+    fn match_gdal(shapes in proptest::collection::vec(arb_geo(), 1..5)) {
+	let (actual, expected) = compare(17, 19, &shapes, MergeAlgorithm::Replace).unwrap();
 	assert_eq!(actual, expected);
     }
 }

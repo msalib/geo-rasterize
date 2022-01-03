@@ -19,11 +19,21 @@ geo = "0.18.0"
 thiserror = "1.0.26"
 num-traits = "0.2.14"
 itertools = "0.10.1"
-smallvec = "1.6.1"
 
 [dev-dependencies]
 gdal = {version = "0.11.0", features = ["array"]}
 pretty_assertions = "1.0.0"
 anyhow = "1.0.42"
 proptest = "1.0.0"
+criterion = "0.3"
+flatgeobuf = "0.6.2"  # can't actually build this without the default http feature
+geozero = {version = "0.7.7", default-features = false, features = ["with-geo"]}
+rand = "0.8.4"
 
+[[bench]]
+name = "versus-gdal"
+harness = false
+
+
+[profile.bench]
+debug = 1
