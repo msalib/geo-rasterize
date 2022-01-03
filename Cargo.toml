@@ -1,6 +1,6 @@
 [package]
 name = "geo-rasterize"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Michael Salib <msalib@gmail.com>"]
 rust-version = "1.56"  # only because we're using the 2021 edition
