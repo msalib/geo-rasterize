@@ -1,8 +1,5 @@
 #![doc = include_str!("../README.md")]
-use std::{
-    fmt::Debug,
-    ops::{Add, RangeInclusive},
-};
+use std::{collections::HashSet, fmt::Debug, ops::Add};
 
 use euclid::{Transform2D, UnknownUnit};
 use geo::{
@@ -15,7 +12,7 @@ use geo::{
 };
 use ndarray::s;
 use ndarray::Array2;
-use num_traits::{AsPrimitive, Num, NumCast};
+use num_traits::{Num, NumCast};
 use thiserror::Error;
 
 mod poly;
@@ -115,7 +112,7 @@ impl BinaryBuilder {
 ///
 /// let shapes: Vec<Geometry<i32>> =
 ///     vec![Point::new(3, 4).into(),
-/// 	     Line::new((0, 3), (3, 0)).into()];
+///          Line::new((0, 3), (3, 0)).into()];
 ///
 /// let mut r = BinaryBuilder::new().width(4).height(5).build()?;
 /// for shape in shapes {
@@ -137,8 +134,7 @@ impl BinaryBuilder {
 /// ```
 #[derive(Clone, Debug)]
 pub struct BinaryRasterizer {
-    pixels: Array2<bool>,
-    geo_to_pix: Option<Transform>,
+    inner: Rasterizer<u8>,
 }
 
 fn to_float<T>(coords: &(T, T)) -> (f64, f64)
@@ -156,54 +152,14 @@ impl BinaryRasterizer {
         if non_finite {
             Err(RasterizeError::NonFiniteCoordinate)
         } else {
-            let pixels = Array2::default((width, height));
-            Ok(BinaryRasterizer { pixels, geo_to_pix })
+            let inner = Rasterizer::new(width, height, geo_to_pix, MergeAlgorithm::Replace, 0);
+            Ok(BinaryRasterizer { inner })
         }
-    }
-
-    fn width(&self) -> usize {
-        self.pixels.shape()[0]
-    }
-
-    fn height(&self) -> usize {
-        self.pixels.shape()[1]
-    }
-
-    fn fill_pixel<T1, T2>(&mut self, ix: T1, iy: T2)
-    where
-        T1: AsPrimitive<usize>,
-        T2: AsPrimitive<usize>,
-    {
-        let ix: usize = ix.as_();
-        let iy: usize = iy.as_();
-        assert!(ix < self.width());
-        assert!(iy < self.height());
-        self.pixels.slice_mut(s![ix, iy]).fill(true);
-    }
-
-    fn fill_block<T1, T2>(&mut self, xs: RangeInclusive<T1>, ys: RangeInclusive<T2>)
-    where
-        T1: AsPrimitive<usize> + Debug,
-        T2: AsPrimitive<usize>,
-    {
-        let (x_start, x_end) = xs.into_inner();
-        let xs: RangeInclusive<usize> = (x_start.as_())..=(x_end.as_());
-        let (y_start, y_end) = ys.into_inner();
-        let ys: RangeInclusive<usize> = (y_start.as_())..=(y_end.as_());
-        debug_assert!(x_start.as_() < self.width());
-        debug_assert!(x_end.as_() < self.width());
-        debug_assert!(y_start.as_() < self.height());
-        debug_assert!(y_end.as_() < self.height());
-        self.pixels.slice_mut(s![xs, ys]).fill(true);
     }
 
     /// Retrieve the transform.
     pub fn geo_to_pix(&self) -> Option<Transform> {
-        self.geo_to_pix
-    }
-
-    pub fn with_geo_to_pix(&mut self, geo_to_pix: Transform) {
-        self.geo_to_pix = Some(geo_to_pix);
+        self.inner.geo_to_pix
     }
 
     /// Rasterize one shape, which can be any type that [geo] provides
@@ -212,45 +168,27 @@ impl BinaryRasterizer {
     pub fn rasterize<Coord, InputShape, ShapeAsF64>(&mut self, shape: &InputShape) -> Result<()>
     where
         InputShape: MapCoords<Coord, f64, Output = ShapeAsF64>,
-        ShapeAsF64: Rasterize + for<'a> CoordsIter<'a, Scalar = f64> + MapCoordsInplace<f64>,
+        ShapeAsF64: Rasterize<u8> + for<'a> CoordsIter<'a, Scalar = f64> + MapCoordsInplace<f64>,
         Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
     {
         // first, convert our input shape so that its coordinates are of type f64
-        let mut float = shape.map_coords(to_float);
-
-        // then ensure that all coordinates are finite or bail
-        let all_finite = float
-            .coords_iter()
-            .all(|coordinate| coordinate.x.is_finite() && coordinate.y.is_finite());
-        if !all_finite {
-            return Err(RasterizeError::NonFiniteCoordinate);
-        }
-
-        // use `geo_to_pix` to convert geographic coordinates to image
-        // coordinates, if it is available
-        match self.geo_to_pix {
-            None => float,
-            Some(transform) => {
-                float.map_coords_inplace(|&(x, y)| {
-                    transform.transform_point(EuclidPoint::new(x, y)).to_tuple()
-                });
-                float
-            }
-        }
-        .rasterize(self); // and then rasterize!
-
-        Ok(())
+        self.inner.rasterize(shape, 1)
     }
 
     /// Retrieve the completed raster array.
     pub fn finish(self) -> Array2<bool> {
-        self.pixels.reversed_axes()
+        self.inner
+            .finish()
+            .mapv(|v| if v == 1u8 { true } else { false })
     }
 }
 
 #[doc(hidden)]
-pub trait Rasterize {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer);
+pub trait Rasterize<Label>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>);
 }
 
 /// Conflict resolution strategy for cases where two shapes cover the
@@ -272,11 +210,11 @@ impl Default for MergeAlgorithm {
     }
 }
 
-/// A builder that constructs [LabelRasterizer]s. Whereas
-/// [BinaryRasterizer] produces an array of booleans,
-/// [LabelRasterizer] produces an array of some generic type (`Label`)
-/// that implements [Copy][std::marker::Copy] and [Add][std::ops::Add]
-/// though typically you'd use a numeric type.
+/// A builder that constructs [Rasterizer]s. Whereas
+/// [BinaryRasterizer] produces an array of booleans, [Rasterizer]
+/// produces an array of some generic type (`Label`) that implements
+/// [Copy][std::marker::Copy] and [Add][std::ops::Add] though
+/// typically you'd use a numeric type.
 ///
 /// [LabelBuilder] needs the `Label` type so the only way to make one
 /// is to specify a `Label` value: the background. The `background` is
@@ -341,11 +279,11 @@ where
         self
     }
 
-    pub fn build(self) -> Result<LabelRasterizer<Label>> {
+    pub fn build(self) -> Result<Rasterizer<Label>> {
         match (self.width, self.height) {
             (None, _) => Err(RasterizeError::MissingWidth),
             (_, None) => Err(RasterizeError::MissingHeight),
-            (Some(width), Some(height)) => Ok(LabelRasterizer::new(
+            (Some(width), Some(height)) => Ok(Rasterizer::new(
                 width,
                 height,
                 self.geo_to_pix,
@@ -356,14 +294,13 @@ where
     }
 }
 
-/// [LabelRasterizer] rasterizes shapes like [BinaryRasterizer] but
-/// instead of making a boolean array, it produces an array of some
-/// generic type (`Label`) that implements [Copy][std::marker::Copy]
-/// and [Add][std::ops::Add] though typically you'd use a numeric
-/// type.
+/// [Rasterizer] rasterizes shapes like [BinaryRasterizer] but instead
+/// of making a boolean array, it produces an array of some generic
+/// type (`Label`) that implements [Copy][std::marker::Copy] and
+/// [Add][std::ops::Add] though typically you'd use a numeric type.
 ///
-/// You can call [new][LabelRasterizer::new] or use [LabelBuilder] to
-/// construct [LabelRasterizer] instances. Constructing one requires a
+/// You can call [new][Rasterizer::new] or use [LabelBuilder] to
+/// construct [Rasterizer] instances. Constructing one requires a
 /// `width`, `height` and optional `geo_to_pix` transform in addition
 /// to `background` which specifies the default `Label` value used to
 /// fill the raster array. And you can provide a [MergeAlgorithm]
@@ -372,7 +309,7 @@ where
 /// rasterizer will use [Replace][MergeAlgorithm::Replace] by default.
 ///
 /// ```rust
-/// # use geo_rasterize::{Result, LabelBuilder, LabelRasterizer};
+/// # use geo_rasterize::{Result, LabelBuilder, Rasterizer};
 /// # fn main() -> Result<()> {
 /// use geo::{Geometry, Line, Point};
 /// use ndarray::array;
@@ -397,16 +334,17 @@ where
 /// );
 /// # Ok(())}
 /// ```
-pub struct LabelRasterizer<Label> {
-    // We store pixels transposed relative to [BinaryRasterizer],
-    // which means we don't have to call `reversed_axes`.
+#[derive(Clone, Debug)]
+pub struct Rasterizer<Label> {
     pixels: Array2<Label>,
     geo_to_pix: Option<Transform>,
     algorithm: MergeAlgorithm,
-    background: Label,
+    foreground: Label,
+    previous_burnt_points: HashSet<(usize, usize)>,
+    current_burnt_points: HashSet<(usize, usize)>,
 }
 
-impl<Label> LabelRasterizer<Label>
+impl<Label> Rasterizer<Label>
 where
     Label: Copy + Add<Output = Label>,
 {
@@ -418,11 +356,13 @@ where
         background: Label,
     ) -> Self {
         let pixels = Array2::from_elem((height, width), background);
-        LabelRasterizer {
+        Rasterizer {
             pixels,
             geo_to_pix,
             algorithm,
-            background,
+            foreground: background,
+            previous_burnt_points: HashSet::new(),
+            current_burnt_points: HashSet::new(),
         }
     }
 
@@ -439,11 +379,100 @@ where
         self.geo_to_pix
     }
 
-    fn binary(&self) -> Result<BinaryRasterizer> {
-        BinaryRasterizer::new(self.width(), self.height(), self.geo_to_pix)
+    // For MergeAlgorithm::Add, we have to ensure that we don't fill
+    // in the same pixels twice for the same; this only matters for
+    // the line drawing algorithm. To ensure that, we maintain a pair
+    // of index sets: one describing the indices of pixels we've
+    // filled in for the last line in the current line string and one
+    // describing the indices of pixels we've filled in for the
+    // current line of the current linestring. When we start a new
+    // line string, we clear both. And when we advance from one line
+    // to another within the same linestring, we swap them and clear
+    // the current one. While drawing each line, for the
+    // vertical/horizontal cases, we only refuse to fill a pixel if it
+    // was filled in the previous iteration but double filling from
+    // the current iteration is fine. But when drawing non-vertical
+    // non-horizontal lines, we refuse to fill pixels if we've filled
+    // them in either the current or previous iteration.
+
+    // aka clear()
+    fn new_linestring(&mut self) {
+        self.previous_burnt_points.clear();
+        self.current_burnt_points.clear();
     }
 
-    /// Rasterize one shape using the supplied foreground label.
+    fn new_line(&mut self) {
+        std::mem::swap(
+            &mut self.previous_burnt_points,
+            &mut self.current_burnt_points,
+        );
+        self.current_burnt_points.clear();
+    }
+
+    fn fill_pixel(&mut self, ix: usize, iy: usize) {
+        debug_assert!(ix < self.width());
+        debug_assert!(iy < self.height());
+        let mut slice = self.pixels.slice_mut(s![iy, ix]);
+        match self.algorithm {
+            MergeAlgorithm::Replace => slice.fill(self.foreground),
+            MergeAlgorithm::Add => {
+                slice.mapv_inplace(|v| v + self.foreground);
+            }
+        }
+    }
+
+    fn fill_pixel_no_repeat(&mut self, ix: usize, iy: usize, use_current_too: bool) {
+        match self.algorithm {
+            MergeAlgorithm::Replace => {
+                self.fill_pixel(ix, iy);
+            }
+            MergeAlgorithm::Add => {
+                let point = (ix, iy);
+                let mut do_fill_pixel = !self.previous_burnt_points.contains(&point);
+                if use_current_too {
+                    do_fill_pixel = do_fill_pixel && !self.current_burnt_points.contains(&point);
+                }
+                if do_fill_pixel {
+                    self.fill_pixel(ix, iy);
+                    self.current_burnt_points.insert(point);
+                }
+            }
+        }
+    }
+
+    // The rasterization algorithm's performance is extremely
+    // sensitive to write ordering: it is focused on horizontal lines,
+    // so it performs much better when pixels that are horizontally
+    // adjacent are adjacent in memory (i.e., where the array we're
+    // writing to has x as the last dimension).
+
+    // Unlike the other fill_ methods, x_start and x_end are an
+    // exclusive range (..), not inclusive (..=).
+    fn fill_horizontal_line(&mut self, x_start: usize, x_end: usize, y: usize) {
+        let mut slice = self.pixels.slice_mut(s![y, x_start..x_end]);
+        match self.algorithm {
+            MergeAlgorithm::Replace => slice.fill(self.foreground),
+            MergeAlgorithm::Add => {
+                slice.mapv_inplace(|v| v + self.foreground);
+            }
+        }
+    }
+
+    fn fill_horizontal_line_no_repeat(&mut self, x_start: usize, x_end: usize, y: usize) {
+        for x in x_start..=x_end {
+            self.fill_pixel_no_repeat(x, y, true);
+        }
+    }
+
+    fn fill_vertical_line_no_repeat(&mut self, x: usize, y_start: usize, y_end: usize) {
+        for y in y_start..=y_end {
+            self.fill_pixel_no_repeat(x, y, false);
+        }
+    }
+
+    /// Rasterize one shape, which can be any type that [geo] provides
+    /// using any coordinate numeric type that can be converted into
+    /// `f64`.
     pub fn rasterize<Coord, InputShape, ShapeAsF64>(
         &mut self,
         shape: &InputShape,
@@ -451,30 +480,35 @@ where
     ) -> Result<()>
     where
         InputShape: MapCoords<Coord, f64, Output = ShapeAsF64>,
-        ShapeAsF64: Rasterize + for<'a> CoordsIter<'a, Scalar = f64> + MapCoordsInplace<f64>,
+        ShapeAsF64: Rasterize<Label> + for<'a> CoordsIter<'a, Scalar = f64> + MapCoordsInplace<f64>,
         Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
     {
-        let mut binary = self.binary()?;
-        binary.rasterize(shape)?;
-        let binary_pixels = binary.finish();
+        // first, convert our input shape so that its coordinates are of type f64
+        let mut float = shape.map_coords(to_float);
 
-        match self.algorithm {
-            MergeAlgorithm::Add => {
-                self.pixels
-                    .zip_mut_with(&binary_pixels, |destination: &mut Label, &source| {
-                        *destination =
-                            *destination + if source { foreground } else { self.background };
-                    })
+        // then ensure that all coordinates are finite or bail
+        let all_finite = float
+            .coords_iter()
+            .all(|coordinate| coordinate.x.is_finite() && coordinate.y.is_finite());
+        if !all_finite {
+            return Err(RasterizeError::NonFiniteCoordinate);
+        }
+
+        self.foreground = foreground;
+
+        // use `geo_to_pix` to convert geographic coordinates to image
+        // coordinates, if it is available
+        match self.geo_to_pix {
+            None => float,
+            Some(transform) => {
+                float.map_coords_inplace(|&(x, y)| {
+                    transform.transform_point(EuclidPoint::new(x, y)).to_tuple()
+                });
+                float
             }
-            MergeAlgorithm::Replace => {
-                self.pixels
-                    .zip_mut_with(&binary_pixels, |destination: &mut Label, &source| {
-                        if source {
-                            *destination = foreground;
-                        }
-                    })
-            }
-        };
+        }
+        .rasterize(self); // and then rasterize!
+
         Ok(())
     }
 
@@ -484,26 +518,35 @@ where
     }
 }
 
-impl Rasterize for Point<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Point<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         if self.x() >= 0. && self.y() >= 0. {
             let x = self.x().floor() as usize;
             let y = self.y().floor() as usize;
             if x < rasterizer.width() && y < rasterizer.height() {
-                rasterizer.pixels[(x, y)] = true;
+                rasterizer.fill_pixel(x, y);
             }
         }
     }
 }
 
-impl Rasterize for MultiPoint<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for MultiPoint<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         self.iter().for_each(|point| point.rasterize(rasterizer));
     }
 }
 
-impl Rasterize for Rect<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Rect<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         // Although it is tempting to make a really fast direct
         // implementation, we're going to convert to a polyon and rely
         // on that impl, in part because affine transforms can easily
@@ -513,14 +556,21 @@ impl Rasterize for Rect<f64> {
     }
 }
 
-impl Rasterize for Line<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Line<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
+        rasterizer.new_linestring();
         rasterize_line(self, rasterizer);
     }
 }
 
-impl Rasterize for LineString<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for LineString<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         // It is tempting to make this impl treat closed `LineString`s
         // as polygons without holes: to just fill them. GDAL seems
         // like it should do that (`gv_rasterize_one_shape` in
@@ -529,37 +579,56 @@ impl Rasterize for LineString<f64> {
         // closed `LinearRings` as `LineSegments` and doesn't fill
         // them and I'm not sure why. Perhaps `LinearRings` are more
         // of an internal implementation detail?
-        self.lines().for_each(|line| line.rasterize(rasterizer));
+        rasterizer.new_linestring();
+        self.lines().for_each(|line| {
+            rasterizer.new_line();
+            rasterize_line(&line, rasterizer);
+        });
     }
 }
 
-impl Rasterize for MultiLineString<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for MultiLineString<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         self.iter()
             .for_each(|line_string| line_string.rasterize(rasterizer));
     }
 }
 
-impl Rasterize for Polygon<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Polygon<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         rasterize_polygon(self.exterior(), self.interiors(), rasterizer);
     }
 }
 
-impl Rasterize for MultiPolygon<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for MultiPolygon<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         self.iter().for_each(|poly| poly.rasterize(rasterizer));
     }
 }
 
-impl Rasterize for Triangle<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Triangle<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         self.to_polygon().rasterize(rasterizer)
     }
 }
 
-impl Rasterize for Geometry<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for Geometry<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         match self {
             Geometry::Point(point) => point.rasterize(rasterizer),
             Geometry::Line(line) => line.rasterize(rasterizer),
@@ -575,452 +644,14 @@ impl Rasterize for Geometry<f64> {
     }
 }
 
-impl Rasterize for GeometryCollection<f64> {
-    fn rasterize(&self, rasterizer: &mut BinaryRasterizer) {
+impl<Label> Rasterize<Label> for GeometryCollection<f64>
+where
+    Label: Copy + Add<Output = Label>,
+{
+    fn rasterize(&self, rasterizer: &mut Rasterizer<Label>) {
         self.iter().for_each(|thing| thing.rasterize(rasterizer));
     }
 }
 
 #[cfg(test)]
-mod tests {
-
-    use super::*;
-    use anyhow::Result;
-    use geo::{polygon, Coordinate};
-    use ndarray::array;
-    use pretty_assertions::assert_eq;
-
-    /// Use `gdal`'s rasterizer to rasterize some shape into a
-    /// (widith, height) window of u8.
-    pub fn gdal_rasterize<Coord, InputShape, ShapeAsF64>(
-        width: usize,
-        height: usize,
-        shape: &InputShape,
-    ) -> Result<Array2<u8>>
-    where
-        InputShape: MapCoords<Coord, f64, Output = ShapeAsF64>,
-        ShapeAsF64: Rasterize
-            + for<'a> CoordsIter<'a, Scalar = f64>
-            + Into<geo::Geometry<f64>>
-            + MapCoordsInplace<f64>,
-        Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
-    {
-        let float = shape.map_coords(to_float);
-        let all_finite = float
-            .coords_iter()
-            .all(|coordinate| coordinate.x.is_finite() && coordinate.y.is_finite());
-        assert!(all_finite);
-
-        let geom: geo::Geometry<f64> = float.into();
-
-        use gdal::{
-            raster::{rasterize, RasterizeOptions},
-            vector::ToGdal,
-            Driver,
-        };
-
-        let gdal_geom = geom.to_gdal()?;
-        let driver = Driver::get("MEM")?;
-        let mut ds = driver.create_with_band_type::<u8, &str>(
-            "some_filename",
-            width as isize,
-            height as isize,
-            1,
-        )?;
-        let options = RasterizeOptions {
-            all_touched: true,
-            ..Default::default()
-        };
-        rasterize(&mut ds, &[1], &[gdal_geom], &[1.0], Some(options))?;
-        ds.rasterband(1)?
-            .read_as_array((0, 0), (width, height), (width, height), None)
-            .map_err(|e| e.into())
-    }
-
-    pub fn compare<Coord, InputShape, ShapeAsF64>(
-        width: usize,
-        height: usize,
-        shape: &InputShape,
-    ) -> Result<(Array2<u8>, Array2<u8>)>
-    where
-        InputShape: MapCoords<Coord, f64, Output = ShapeAsF64>,
-        ShapeAsF64: Rasterize
-            + for<'a> CoordsIter<'a, Scalar = f64>
-            + Into<geo::Geometry<f64>>
-            + MapCoordsInplace<f64>,
-        Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
-    {
-        let mut r = BinaryRasterizer::new(width, height, None)?;
-        r.rasterize(shape)?;
-        // Why switch to u8? Because it makes looking at arrays on the
-        // console much easier.
-        let actual = r.finish().mapv(|v| v as u8);
-
-        let expected = gdal_rasterize(width, height, shape)?;
-        if actual != expected {
-            println!("{}\n\n{}", actual, expected);
-        }
-        Ok((actual, expected))
-    }
-
-    #[test]
-    fn point() -> Result<()> {
-        let (actual, expected) = compare(6, 5, &geo::Point::new(2, 3))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn rect() -> Result<()> {
-        // let (actual, expected) = compare(6, 6, &geo::Rect::new((0, 1), (2, 3)))?;
-        // assert_eq!(actual, expected);
-        let (actual, expected) = compare(6, 5, &geo::Rect::new((1, 1), (3, 2)).to_polygon())?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line() -> Result<()> {
-        let (actual, expected) = compare(6, 5, &geo::Line::new((0, 0), (6, 6)))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line2() -> Result<()> {
-        let (actual, expected) = compare(6, 6, &geo::Line::new((6, 6), (0, 0)))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line_vertical() -> Result<()> {
-        let (actual, expected) = compare(5, 5, &geo::Line::new((2, 1), (2, 4)))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line_horizontal() -> Result<()> {
-        let (actual, expected) = compare(5, 5, &geo::Line::new((1, 2), (4, 2)))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line_diag() -> Result<()> {
-        let (actual, expected) = compare(5, 5, &geo::Line::new((1, 1), (3, 3)))?;
-        assert_eq!(actual, expected);
-
-        let (actual, expected) = compare(5, 5, &geo::Line::new((3, 1), (1, 3)))?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn line3() -> Result<()> {
-        let poly = polygon![
-            (x:4, y:2),
-            (x:2, y:0),
-            (x:0, y:2),
-            (x:2, y:4),
-            (x:4, y:2),
-        ];
-
-        // FIXME: I think our problem here is that geo has no type to
-        // represent LinearRings but GDAL does, so when we insist on
-        // converting closed linestrings as linear rings, GDAL doesn't
-        // do that automatically. maybe try updating the gdal
-        // invocation function to covert geometries of that type into
-        // GDAL LinearRings?
-
-        let (actual, expected) = compare(5, 5, poly.exterior())?;
-        assert_eq!(actual, expected);
-
-        for line in poly.exterior().lines() {
-            let (actual, expected) = compare(5, 5, &line)?;
-            assert_eq!(actual, expected);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn poly() -> Result<()> {
-        let poly = polygon![
-            (x:4, y:2),
-            (x:2, y:0),
-            (x:0, y:2),
-            (x:2, y:4),
-            (x:4, y:2),
-        ];
-
-        let (actual, expected) = compare(5, 5, &poly)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn label_multiple() -> Result<()> {
-        use ndarray::array;
-
-        let point = Point::new(3, 4);
-        let line = Line::new((0, 3), (3, 0));
-
-        let mut rasterizer = LabelBuilder::background(0).width(4).height(5).build()?;
-        rasterizer.rasterize(&point, 3)?;
-        rasterizer.rasterize(&line, 7)?;
-
-        let pixels = rasterizer.finish();
-        assert_eq!(
-            pixels.mapv(|v| v as u8),
-            array![
-                [0, 0, 7, 0],
-                [0, 7, 7, 0],
-                [7, 7, 0, 0],
-                [7, 0, 0, 0],
-                [0, 0, 0, 3]
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn heatmap() -> Result<()> {
-        let lines = vec![Line::new((0, 0), (5, 5)), Line::new((5, 0), (0, 5))];
-
-        let mut rasterizer = LabelBuilder::background(0)
-            .width(5)
-            .height(5)
-            .algorithm(MergeAlgorithm::Add)
-            .build()?;
-        for line in lines {
-            rasterizer.rasterize(&line, 1)?;
-        }
-
-        let pixels = rasterizer.finish();
-        assert_eq!(
-            pixels.mapv(|v| v as u8),
-            array![
-                [1, 0, 0, 0, 1],
-                [0, 1, 0, 1, 1],
-                [0, 0, 2, 1, 0],
-                [0, 1, 1, 1, 0],
-                [1, 1, 0, 0, 1]
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn heatmap_transform() -> Result<()> {
-        let lines = vec![Line::new((0, 0), (5, 5)), Line::new((5, 0), (0, 5))];
-        let transform = Transform::identity();
-
-        let mut rasterizer = LabelBuilder::background(0)
-            .width(5)
-            .height(5)
-            .algorithm(MergeAlgorithm::Add)
-            .geo_to_pix(transform)
-            .build()?;
-        assert_eq!(rasterizer.geo_to_pix(), Some(transform));
-
-        for line in lines {
-            rasterizer.rasterize(&line, 1)?;
-        }
-
-        let pixels = rasterizer.finish();
-        assert_eq!(
-            pixels.mapv(|v| v as u8),
-            array![
-                [1, 0, 0, 0, 1],
-                [0, 1, 0, 1, 1],
-                [0, 0, 2, 1, 0],
-                [0, 1, 1, 1, 0],
-                [1, 1, 0, 0, 1]
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn bad_line() -> Result<()> {
-        let line = Line {
-            start: Coordinate {
-                x: -1.984208921953521,
-                y: 17.310676190851567,
-            },
-            end: Coordinate {
-                x: 0.0,
-                y: 17.2410885032527,
-            },
-        };
-        let (actual, expected) = compare(17, 19, &line)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn bad_rect() -> Result<()> {
-        let r = Rect::new(
-            Coordinate {
-                x: -5.645366376556284,
-                y: -8.757910782301106,
-            },
-            Coordinate {
-                x: 5.645366376556284,
-                y: 8.757910782301106,
-            },
-        );
-
-        let (actual, expected) = compare(17, 19, &r)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn bad_poly() -> Result<()> {
-        use geo::line_string;
-        let r = Polygon::new(
-            line_string![
-                Coordinate {
-                    x: 8.420838780938684,
-                    y: 0.0,
-                },
-                Coordinate {
-                    x: -4.21041939046934,
-                    y: 7.292660305466085,
-                },
-                Coordinate {
-                    x: -4.210419390469346,
-                    y: -7.2926603054660815,
-                },
-                Coordinate {
-                    x: 8.420838780938684,
-                    y: 0.0,
-                }
-            ],
-            vec![],
-        );
-        let (actual, expected) = compare(17, 19, &r)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn bad_poly2() -> Result<()> {
-        use geo::line_string;
-        let r = Polygon::new(
-            line_string![
-                Coordinate {
-                    x: 19.88238653081379,
-                    y: 0.0
-                },
-                Coordinate {
-                    x: -0.3049020763576378,
-                    y: 11.65513651155909
-                },
-                Coordinate {
-                    x: -0.30490207635764666,
-                    y: -11.655136511559085
-                },
-                Coordinate {
-                    x: 19.88238653081379,
-                    y: 0.0
-                }
-            ],
-            vec![],
-        );
-        let (actual, expected) = compare(17, 19, &r)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn bad_line2() -> Result<()> {
-        let line = Line {
-            start: Coordinate {
-                x: 0.0,
-                y: 0.995529841217325,
-            },
-            end: Coordinate {
-                x: 14.345339055640835,
-                y: 1.003085512751344,
-            },
-        };
-        let (actual, expected) = compare(17, 19, &line)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn stuff() -> Result<()> {
-        BinaryBuilder::new()
-            .width(3)
-            .height(4)
-            .geo_to_pix(Transform::identity())
-            .build()?;
-
-        let mut r = BinaryRasterizer::new(5, 7, None)?;
-        assert_eq!(r.geo_to_pix(), None);
-        let transform = Transform::identity();
-        r.with_geo_to_pix(transform);
-        assert_eq!(r.geo_to_pix(), Some(transform));
-        Ok(())
-    }
-
-    #[test]
-    fn check_errors() -> Result<()> {
-        let point = Point::new(123., f64::NAN);
-        assert_eq!(
-            BinaryBuilder::new()
-                .height(4)
-                .width(7)
-                .build()?
-                .rasterize(&point),
-            Err(RasterizeError::NonFiniteCoordinate)
-        );
-
-        assert_eq!(
-            BinaryBuilder::new().width(4).build().err().unwrap(),
-            RasterizeError::MissingHeight
-        );
-
-        assert_eq!(
-            BinaryBuilder::new().height(4).build().err().unwrap(),
-            RasterizeError::MissingWidth
-        );
-
-        assert_eq!(
-            LabelBuilder::background(0).width(4).build().err().unwrap(),
-            RasterizeError::MissingHeight
-        );
-
-        assert_eq!(
-            LabelBuilder::background(0).height(4).build().err().unwrap(),
-            RasterizeError::MissingWidth
-        );
-
-        assert_eq!(
-            BinaryRasterizer::new(
-                5,
-                8,
-                Some(Transform::from_array([0., 1., 2., 3., 4., f64::NAN]))
-            )
-            .err()
-            .unwrap(),
-            RasterizeError::NonFiniteCoordinate
-        );
-        Ok(())
-    }
-}
-
-// trait Storage {
-//     fn fill_pixel(&mut self, ix: usize, iy: usize);
-//     fn fill_block(&mut self, xs: RangeInclusive<usize>, ys: RangeInclusive<usize>);
-//     fn into_array(self) -> Result<Array2<bool>>;
-//     fn into_subset(self) -> Result<(Array2<bool>, Rect<usize>)>;
-// }
-
-// TODO
-
-// proptest with a gdal cache oracle that uses [kv] for persistence
+mod tests;

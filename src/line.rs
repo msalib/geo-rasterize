@@ -1,8 +1,13 @@
+use std::ops::Add;
+
 use geo::Line;
 
-use crate::BinaryRasterizer;
+use crate::Rasterizer;
 
-pub fn rasterize_line(line: &Line<f64>, rasterizer: &mut BinaryRasterizer) {
+pub fn rasterize_line<Label>(line: &Line<f64>, rasterizer: &mut Rasterizer<Label>)
+where
+    Label: Copy + Add<Output = Label>,
+{
     // FIXME:should that > be >=? gdal says >....
     let width = rasterizer.width() as f64;
     let height = rasterizer.height() as f64;
@@ -42,7 +47,7 @@ pub fn rasterize_line(line: &Line<f64>, rasterizer: &mut BinaryRasterizer) {
 
         let y_start = (y_start.floor() as usize).clamp(0, rasterizer.height() - 1);
         let y_end = (y_end.floor() as usize).clamp(0, rasterizer.height() - 1);
-        rasterizer.fill_block(ix..=ix, y_start..=y_end);
+        rasterizer.fill_vertical_line_no_repeat(ix as usize, y_start, y_end);
     } else if is_horizontal {
         // ensure that `x_start < x_end`
         let (x_start, x_end) = if line.start.x > line.end.x {
@@ -59,7 +64,7 @@ pub fn rasterize_line(line: &Line<f64>, rasterizer: &mut BinaryRasterizer) {
 
         let x_start = (x_start.floor() as usize).clamp(0, rasterizer.width() - 1);
         let x_end = (x_end.floor() as usize).clamp(0, rasterizer.width() - 1);
-        rasterizer.fill_block(x_start..=x_end, iy..=iy);
+        rasterizer.fill_horizontal_line_no_repeat(x_start, x_end, iy as usize);
     } else {
         // General case for a non-horizontal non-vertical line!
 
@@ -107,7 +112,7 @@ pub fn rasterize_line(line: &Line<f64>, rasterizer: &mut BinaryRasterizer) {
 
             if iy >= 0 && ((iy as usize) < rasterizer.height()) {
                 // burn this pixel in
-                rasterizer.fill_pixel(ix, iy);
+                rasterizer.fill_horizontal_line_no_repeat(ix as usize, ix as usize, iy as usize);
             }
 
             // now update
