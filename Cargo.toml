@@ -15,7 +15,7 @@ categories = ["encoding", "graphics", "rendering", "science"]
 [dependencies]
 euclid = "0.22.6"
 ndarray = "0.15.3"
-geo = "0.18.0"
+geo = "0.23.0"
 thiserror = "1.0.26"
 num-traits = "0.2.14"
 itertools = "0.10.1"
