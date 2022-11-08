@@ -26,7 +26,7 @@ pretty_assertions = "1.0.0"
 anyhow = "1.0.42"
 proptest = "1.0.0"
 criterion = "0.3"
-flatgeobuf = "0.6.2"  # can't actually build this without the default http feature
+flatgeobuf = "3.24.0"  # can't actually build this without the default http feature
 geozero = {version = "0.7.7", default-features = false, features = ["with-geo"]}
 rand = "0.8.4"
 
