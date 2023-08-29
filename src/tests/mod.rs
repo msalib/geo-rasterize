@@ -1,6 +1,6 @@
 use crate::*;
 use anyhow::Result;
-use geo::{polygon, Coordinate};
+use geo::polygon;
 use ndarray::array;
 use pretty_assertions::assert_eq;
 
@@ -9,7 +9,7 @@ use utils::compare;
 
 #[test]
 fn point() -> Result<()> {
-    let (actual, expected) = compare(6, 5, &[geo::Point::new(2, 3)], MergeAlgorithm::Replace)?;
+    let (actual, expected) = compare(6, 5, &[Point::new(2, 3)], MergeAlgorithm::Replace)?;
     assert_eq!(actual, expected);
     Ok(())
 }
@@ -21,7 +21,7 @@ fn rect() -> Result<()> {
     let (actual, expected) = compare(
         6,
         5,
-        &[geo::Rect::new((1, 1), (3, 2)).to_polygon()],
+        &[Rect::new((1, 1), (3, 2)).to_polygon()],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -33,7 +33,7 @@ fn line() -> Result<()> {
     let (actual, expected) = compare(
         6,
         5,
-        &[geo::Line::new((0, 0), (6, 6))],
+        &[Line::new((0, 0), (6, 6))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -45,7 +45,7 @@ fn line2() -> Result<()> {
     let (actual, expected) = compare(
         6,
         6,
-        &[geo::Line::new((6, 6), (0, 0))],
+        &[Line::new((6, 6), (0, 0))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -57,7 +57,7 @@ fn line_vertical() -> Result<()> {
     let (actual, expected) = compare(
         5,
         5,
-        &[geo::Line::new((2, 1), (2, 4))],
+        &[Line::new((2, 1), (2, 4))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -69,7 +69,7 @@ fn line_horizontal() -> Result<()> {
     let (actual, expected) = compare(
         5,
         5,
-        &[geo::Line::new((1, 2), (4, 2))],
+        &[Line::new((1, 2), (4, 2))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -81,7 +81,7 @@ fn line_diag() -> Result<()> {
     let (actual, expected) = compare(
         5,
         5,
-        &[geo::Line::new((1, 1), (3, 3))],
+        &[Line::new((1, 1), (3, 3))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -89,7 +89,7 @@ fn line_diag() -> Result<()> {
     let (actual, expected) = compare(
         5,
         5,
-        &[geo::Line::new((3, 1), (1, 3))],
+        &[Line::new((3, 1), (1, 3))],
         MergeAlgorithm::Replace,
     )?;
     assert_eq!(actual, expected);
@@ -224,11 +224,11 @@ fn heatmap_transform() -> Result<()> {
 #[test]
 fn bad_line() -> Result<()> {
     let line = Line {
-        start: Coordinate {
+        start: Coord {
             x: -1.984208921953521,
             y: 17.310676190851567,
         },
-        end: Coordinate {
+        end: Coord {
             x: 0.0,
             y: 17.2410885032527,
         },
@@ -241,11 +241,11 @@ fn bad_line() -> Result<()> {
 #[test]
 fn bad_rect() -> Result<()> {
     let r = Rect::new(
-        Coordinate {
+        Coord {
             x: -5.645366376556284,
             y: -8.757910782301106,
         },
-        Coordinate {
+        Coord {
             x: 5.645366376556284,
             y: 8.757910782301106,
         },
@@ -261,19 +261,19 @@ fn bad_poly() -> Result<()> {
     use geo::line_string;
     let r = Polygon::new(
         line_string![
-            Coordinate {
+            Coord {
                 x: 8.420838780938684,
                 y: 0.0,
             },
-            Coordinate {
+            Coord {
                 x: -4.21041939046934,
                 y: 7.292660305466085,
             },
-            Coordinate {
+            Coord {
                 x: -4.210419390469346,
                 y: -7.2926603054660815,
             },
-            Coordinate {
+            Coord {
                 x: 8.420838780938684,
                 y: 0.0,
             }
@@ -290,19 +290,19 @@ fn bad_poly2() -> Result<()> {
     use geo::line_string;
     let r = Polygon::new(
         line_string![
-            Coordinate {
+            Coord {
                 x: 19.88238653081379,
                 y: 0.0
             },
-            Coordinate {
+            Coord {
                 x: -0.3049020763576378,
                 y: 11.65513651155909
             },
-            Coordinate {
+            Coord {
                 x: -0.30490207635764666,
                 y: -11.655136511559085
             },
-            Coordinate {
+            Coord {
                 x: 19.88238653081379,
                 y: 0.0
             }
@@ -317,11 +317,11 @@ fn bad_poly2() -> Result<()> {
 #[test]
 fn bad_line2() -> Result<()> {
     let line = Line {
-        start: Coordinate {
+        start: Coord {
             x: 0.0,
             y: 0.995529841217325,
         },
-        end: Coordinate {
+        end: Coord {
             x: 14.345339055640835,
             y: 1.003085512751344,
         },

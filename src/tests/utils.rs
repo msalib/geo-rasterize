@@ -1,20 +1,22 @@
 use std::fmt::Debug;
 
 use anyhow::Result;
+use gdal::DriverManager;
 use geo::algorithm::{
     coords_iter::CoordsIter,
-    map_coords::{MapCoords, MapCoordsInplace},
+    map_coords::{MapCoords, MapCoordsInPlace},
 };
+use geo::{Coord, CoordNum};
 use ndarray::Array2;
 use num_traits::{Num, NumCast};
 
 use super::{MergeAlgorithm, Rasterize, Rasterizer};
 
-fn to_float<T>(coords: &(T, T)) -> (f64, f64)
+fn to_float<T>(coord: Coord<T>) -> Coord
 where
-    T: Into<f64> + Copy,
+    T: Into<f64> + Copy + CoordNum,
 {
-    (coords.0.into(), coords.1.into())
+    Coord { x: coord.x.into(), y: coord.y.into() }
 }
 
 /// Use `gdal`'s rasterizer to rasterize some shape into a
@@ -30,16 +32,15 @@ where
     ShapeAsF64: Rasterize<u8>
         + for<'a> CoordsIter<'a, Scalar = f64>
         + Into<geo::Geometry<f64>>
-        + MapCoordsInplace<f64>,
+        + MapCoordsInPlace<f64>,
     Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
 {
     use gdal::{
         raster::{rasterize, RasterizeOptions},
         vector::ToGdal,
-        Driver,
     };
 
-    let driver = Driver::get("MEM")?;
+    let driver = DriverManager::get_driver_by_name("MEM")?;
     let mut ds = driver.create_with_band_type::<u8, &str>(
         "some_filename",
         width as isize,
@@ -85,7 +86,7 @@ where
     ShapeAsF64: Rasterize<u8>
         + for<'a> CoordsIter<'a, Scalar = f64>
         + Into<geo::Geometry<f64>>
-        + MapCoordsInplace<f64>,
+        + MapCoordsInPlace<f64>,
     Coord: Into<f64> + Copy + Debug + Num + NumCast + PartialOrd,
 {
     let mut r = Rasterizer::new(width, height, None, algorithm, 0u8);
